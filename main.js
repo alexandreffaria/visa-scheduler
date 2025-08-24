@@ -31,11 +31,31 @@ const puppeteer = require('puppeteer');
   const consulate = process.env.VISA_CONSULATE || 'Brasília';
   console.log(`➡️ Selecting consulate: ${consulate}`);
 
-  // Wait for consulate selection element and select the location
+  // Wait for the consulate selection element
   await page.waitForSelector('#appointments_consulate_appointment_facility_id', { timeout: 10000 });
-  await page.select('#appointments_consulate_appointment_facility_id', consulate);
 
-  console.log(`➡️ Successfully selected consulate: ${consulate}`);
+  // Click on the select element to focus it
+  await page.click('#appointments_consulate_appointment_facility_id');
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  // Map consulate names to values (from the HTML options)
+  const consulateValueMap = {
+    'Brasília': '54',
+    'Porto Alegre': '128',
+    'Recife': '57',
+    'Rio de Janeiro': '55',
+    'São Paulo': '56'
+  };
+
+  const consulateValue = consulateValueMap[consulate];
+
+  if (consulateValue) {
+    // Use select method with the correct value
+    await page.select('#appointments_consulate_appointment_facility_id', consulateValue);
+    console.log(`➡️ Successfully selected consulate: ${consulate} (value: ${consulateValue})`);
+  } else {
+    console.log(`❌ Consular not found in mapping: ${consulate}`);
+  }
 
   // keep browser open for now
   // await browser.close();
