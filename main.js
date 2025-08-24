@@ -300,181 +300,191 @@ const TelegramBot = require('node-telegram-bot-api');
                           await new Promise(resolve => setTimeout(resolve, 1000));
 
                           // Check for CASV dates that match the consulate date ±1 day
-                          try {
-                            console.log(`   📅 Checking CASV dates near consulate date ${selectedConsulateDate}...`);
+                           try {
+                             console.log(`   📅 Checking CASV dates near consulate date ${selectedConsulateDate}...`);
 
-                            // Click on CASV date input to open calendar
-                            await page.click('#appointments_asc_appointment_date');
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                             // Click on CASV date input to open calendar
+                             await page.click('#appointments_asc_appointment_date');
+                             await new Promise(resolve => setTimeout(resolve, 2000));
 
-                            // Navigate through CASV calendar months to find available dates
-                            let casvDays = [];
-                            let casvMonthsChecked = 0;
-                            const maxCasvMonthsToCheck = 6; // Check up to 6 months ahead for CASV
+                             // Navigate through CASV calendar months to find available dates
+                             let casvDays = [];
+                             let casvMonthsChecked = 0;
+                             const maxCasvMonthsToCheck = 12; // Check up to 12 months ahead for CASV
 
-                            console.log(`   📅 Navigating CASV calendar months...`);
+                             console.log(`   📅 Navigating CASV calendar months...`);
 
-                            while (casvMonthsChecked < maxCasvMonthsToCheck && casvDays.length === 0) {
-                              console.log(`   Checking CASV month ${casvMonthsChecked + 1}...`);
+                             let matchingCasvDates = [];
+                             
+                             while (casvMonthsChecked < maxCasvMonthsToCheck && matchingCasvDates.length === 0) {
+                               console.log(`   Checking CASV month ${casvMonthsChecked + 1}...`);
 
-                              // Check current month for available dates
-                              const currentCasvDays = await page.$$eval('.ui-datepicker-calendar td', elements => {
-                                return elements.map(el => {
-                                  const date = el.textContent?.trim();
-                                  const className = el.className;
-                                  const isDisabled = el.classList.contains('ui-datepicker-unselectable') ||
-                                                   el.classList.contains('ui-state-disabled') ||
-                                                   el.classList.contains('disabled');
-                                  const isOtherMonth = el.classList.contains('ui-datepicker-other-month');
+                               // Check current month for available dates
+                               const currentCasvDays = await page.$$eval('.ui-datepicker-calendar td', elements => {
+                                 return elements.map(el => {
+                                   const date = el.textContent?.trim();
+                                   const className = el.className;
+                                   const isDisabled = el.classList.contains('ui-datepicker-unselectable') ||
+                                                    el.classList.contains('ui-state-disabled') ||
+                                                    el.classList.contains('disabled');
+                                   const isOtherMonth = el.classList.contains('ui-datepicker-other-month');
 
-                                  return {
-                                    date,
-                                    className,
-                                    isDisabled,
-                                    isOtherMonth,
-                                    isAvailable: !isDisabled && !isOtherMonth && date
-                                  };
-                                }).filter(day => day.isAvailable && day.date && !isNaN(parseInt(day.date)));
-                              });
+                                   return {
+                                     date,
+                                     className,
+                                     isDisabled,
+                                     isOtherMonth,
+                                     isAvailable: !isDisabled && !isOtherMonth && date
+                                   };
+                                 }).filter(day => day.isAvailable && day.date && !isNaN(parseInt(day.date)));
+                               });
 
-                              if (currentCasvDays.length > 0) {
-                                casvDays = currentCasvDays;
-                                console.log(`   ✅ Found ${currentCasvDays.length} CASV dates in month ${casvMonthsChecked + 1}`);
-                                break;
-                              } else {
-                                console.log(`   ❌ No CASV dates found in this month`);
-                              }
+                               if (currentCasvDays.length > 0) {
+                                 console.log(`   ✅ Found ${currentCasvDays.length} CASV dates in month ${casvMonthsChecked + 1}`);
+                                 console.log(`   📅 Available CASV dates: ${currentCasvDays.map(d => d.date).join(', ')}`);
+                                 
+                                 // Check if any of these dates match the consulate date ±2 days
+                                 const potentialMatches = currentCasvDays.filter(day => {
+                                   const casvDate = parseInt(day.date);
+                                   const difference = Math.abs(casvDate - selectedConsulateDate);
+                                   return difference <= 2; // Same day, or ±2 days
+                                 });
 
-                              // If no dates found in current month, try to navigate to next month
-                              if (casvDays.length === 0 && casvMonthsChecked < maxCasvMonthsToCheck - 1) {
-                                try {
-                                  // Try common "next month" button selectors
-                                  const nextButtonSelectors = [
-                                    '.ui-datepicker-next',
-                                    '.next-month',
-                                    '.calendar-next',
-                                    'a[data-handler="next"]',
-                                    '.datepicker-next'
-                                  ];
+                                 if (potentialMatches.length > 0) {
+                                   matchingCasvDates = potentialMatches;
+                                   casvDays = currentCasvDays; // Store all available days for reference
+                                   console.log(`   🎯 Found ${potentialMatches.length} matching CASV dates: ${potentialMatches.map(d => d.date).join(', ')}`);
+                                   break;
+                                 } else {
+                                   console.log(`   ❌ No CASV dates found within ±2 days of consulate date ${selectedConsulateDate}`);
+                                   console.log(`   🔍 Looking for dates between ${Math.max(1, selectedConsulateDate - 2)} and ${selectedConsulateDate + 2}`);
+                                 }
+                               } else {
+                                 console.log(`   ❌ No CASV dates found in this month`);
+                               }
 
-                                  let buttonClicked = false;
-                                  for (const buttonSelector of nextButtonSelectors) {
-                                    try {
-                                      await page.click(buttonSelector);
-                                      buttonClicked = true;
-                                      await new Promise(resolve => setTimeout(resolve, 1000));
-                                      break;
-                                    } catch (error) {
-                                      // Try next selector
-                                    }
-                                  }
+                               // Try to navigate to next month if no matching dates found
+                               if (matchingCasvDates.length === 0 && casvMonthsChecked < maxCasvMonthsToCheck - 1) {
+                                 try {
+                                   // Try common "next month" button selectors
+                                   const nextButtonSelectors = [
+                                     '.ui-datepicker-next',
+                                     '.next-month',
+                                     '.calendar-next',
+                                     'a[data-handler="next"]',
+                                     '.datepicker-next'
+                                   ];
 
-                                  if (!buttonClicked) {
-                                    console.log(`   ⚠️ Could not find CASV next month button, stopping navigation`);
-                                    break;
-                                  }
-                                } catch (error) {
-                                  console.log(`   ⚠️ Error navigating CASV to next month: ${error.message}`);
-                                  break;
-                                }
-                              }
+                                   let buttonClicked = false;
+                                   for (const buttonSelector of nextButtonSelectors) {
+                                     try {
+                                       await page.click(buttonSelector);
+                                       buttonClicked = true;
+                                       await new Promise(resolve => setTimeout(resolve, 1000));
+                                       break;
+                                     } catch (error) {
+                                       // Try next selector
+                                     }
+                                   }
 
-                              casvMonthsChecked++;
-                            }
+                                   if (!buttonClicked) {
+                                     console.log(`   ⚠️ Could not find CASV next month button, stopping navigation`);
+                                     break;
+                                   }
+                                 } catch (error) {
+                                   console.log(`   ⚠️ Error navigating CASV to next month: ${error.message}`);
+                                   break;
+                                 }
+                               }
 
-                            if (casvDays.length > 0) {
-                              // Find CASV dates that are within ±1 day of consulate date
-                              const matchingCasvDates = casvDays.filter(day => {
-                                const casvDate = parseInt(day.date);
-                                const difference = Math.abs(casvDate - selectedConsulateDate);
-                                return difference <= 1; // Same day, or ±1 day
-                              });
+                               casvMonthsChecked++;
+                             }
 
-                              if (matchingCasvDates.length > 0) {
-                                // Select the CASV date that best matches the consulate date
-                                // Prefer same day, then closest date
-                                let bestMatch = matchingCasvDates[0];
-                                let bestDifference = Math.abs(parseInt(bestMatch.date) - selectedConsulateDate);
+                             if (matchingCasvDates.length > 0) {
+                               // Select the CASV date that best matches the consulate date
+                               // Prefer same day, then closest date
+                               let bestMatch = matchingCasvDates[0];
+                               let bestDifference = Math.abs(parseInt(bestMatch.date) - selectedConsulateDate);
 
-                                for (const casvDay of matchingCasvDates) {
-                                  const difference = Math.abs(parseInt(casvDay.date) - selectedConsulateDate);
-                                  if (difference < bestDifference) {
-                                    bestMatch = casvDay;
-                                    bestDifference = difference;
-                                  }
-                                }
+                               for (const casvDay of matchingCasvDates) {
+                                 const difference = Math.abs(parseInt(casvDay.date) - selectedConsulateDate);
+                                 if (difference < bestDifference) {
+                                   bestMatch = casvDay;
+                                   bestDifference = difference;
+                                 }
+                               }
 
-                                console.log(`   ✅ Found matching CASV date: ${bestMatch.date} (diff: ${bestDifference} days)`);
-                                console.log(`   📅 Available matching CASV dates: ${matchingCasvDates.map(d => d.date).join(', ')}`);
+                               console.log(`   ✅ Found matching CASV date: ${bestMatch.date} (diff: ${bestDifference} days)`);
+                               console.log(`   📅 Available matching CASV dates: ${matchingCasvDates.map(d => d.date).join(', ')}`);
 
-                                // Click on the best matching CASV date
-                                const casvDayElements = await page.$$('.ui-datepicker-calendar td');
-                                for (const dayElement of casvDayElements) {
-                                  const text = await dayElement.evaluate(el => el.textContent?.trim());
-                                  const className = await dayElement.evaluate(el => el.className);
+                               // Click on the best matching CASV date
+                               const casvDayElements = await page.$$('.ui-datepicker-calendar td');
+                               for (const dayElement of casvDayElements) {
+                                 const text = await dayElement.evaluate(el => el.textContent?.trim());
+                                 const className = await dayElement.evaluate(el => el.className);
 
-                                  if (text === bestMatch.date &&
-                                      !className.includes('ui-datepicker-unselectable') &&
-                                      !className.includes('ui-state-disabled') &&
-                                      !className.includes('ui-datepicker-other-month')) {
+                                 if (text === bestMatch.date &&
+                                     !className.includes('ui-datepicker-unselectable') &&
+                                     !className.includes('ui-state-disabled') &&
+                                     !className.includes('ui-datepicker-other-month')) {
 
-                                    await dayElement.click();
-                                    console.log(`   ✅ Successfully selected CASV date: ${bestMatch.date}`);
+                                   await dayElement.click();
+                                   console.log(`   ✅ Successfully selected CASV date: ${bestMatch.date}`);
 
-                                    // Wait for CASV date selection to register
-                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                   // Wait for CASV date selection to register
+                                   await new Promise(resolve => setTimeout(resolve, 1000));
 
-                                    // Select the earliest available CASV time slot
-                                    try {
-                                      console.log(`   ⏰ Looking for available CASV time slots...`);
+                                   // Select the earliest available CASV time slot
+                                   try {
+                                     console.log(`   ⏰ Looking for available CASV time slots...`);
 
-                                      // Wait for CASV time options to load
-                                      await page.waitForSelector('#appointments_asc_appointment_time option', { timeout: 10000 });
+                                     // Wait for CASV time options to load
+                                     await page.waitForSelector('#appointments_asc_appointment_time option', { timeout: 10000 });
 
-                                      // Get all available CASV time options
-                                      const casvTimeOptions = await page.$$eval('#appointments_asc_appointment_time option', options => {
-                                        return options.map(option => ({
-                                          value: option.value,
-                                          text: option.text.trim(),
-                                          disabled: option.disabled
-                                        })).filter(option => option.value && !option.disabled && option.text);
-                                      });
+                                     // Get all available CASV time options
+                                     const casvTimeOptions = await page.$$eval('#appointments_asc_appointment_time option', options => {
+                                       return options.map(option => ({
+                                         value: option.value,
+                                         text: option.text.trim(),
+                                         disabled: option.disabled
+                                       })).filter(option => option.value && !option.disabled && option.text);
+                                     });
 
-                                      if (casvTimeOptions.length > 0) {
-                                        // Select the first (earliest) CASV time slot
-                                        const earliestCasvTime = casvTimeOptions[0];
-                                        console.log(`   📅 Available CASV times: ${casvTimeOptions.map(t => t.text).join(', ')}`);
-                                        console.log(`   🎯 Selecting earliest CASV time: ${earliestCasvTime.text}`);
+                                     if (casvTimeOptions.length > 0) {
+                                       // Select the first (earliest) CASV time slot
+                                       const earliestCasvTime = casvTimeOptions[0];
+                                       console.log(`   📅 Available CASV times: ${casvTimeOptions.map(t => t.text).join(', ')}`);
+                                       console.log(`   🎯 Selecting earliest CASV time: ${earliestCasvTime.text}`);
 
-                                        await page.select('#appointments_asc_appointment_time', earliestCasvTime.value);
-                                        console.log(`   ✅ Successfully selected CASV time: ${earliestCasvTime.text}`);
+                                       await page.select('#appointments_asc_appointment_time', earliestCasvTime.value);
+                                       console.log(`   ✅ Successfully selected CASV time: ${earliestCasvTime.text}`);
 
-                                        // Wait for CASV time selection to register
-                                        await new Promise(resolve => setTimeout(resolve, 1000));
+                                       // Wait for CASV time selection to register
+                                       await new Promise(resolve => setTimeout(resolve, 1000));
 
-                                        // Successfully selected both consulate and CASV appointments
-                                        const fullConsulateDate = formatFullDate(earliestDate);
-                                        const fullCasvDate = formatFullDate(bestMatch.date);
+                                       // Successfully selected both consulate and CASV appointments
+                                       const fullConsulateDate = formatFullDate(earliestDate);
+                                       const fullCasvDate = formatFullDate(bestMatch.date);
 
-                                        console.log(`\n🎉 APPOINTMENT SUCCESSFULLY SELECTED! 🎉`);
-                                        console.log(`📅 Consulate Date: ${fullConsulateDate}`);
-                                        console.log(`⏰ Consulate Time: ${latestTime.text}`);
-                                        console.log(`🏢 CASV Date: ${fullCasvDate}`);
-                                        console.log(`⏰ CASV Time: ${earliestCasvTime.text}`);
+                                       console.log(`\n🎉 APPOINTMENT SUCCESSFULLY SELECTED! 🎉`);
+                                       console.log(`📅 Consulate Date: ${fullConsulateDate}`);
+                                       console.log(`⏰ Consulate Time: ${latestTime.text}`);
+                                       console.log(`🏢 CASV Date: ${fullCasvDate}`);
+                                       console.log(`⏰ CASV Time: ${earliestCasvTime.text}`);
 
-                                        // Check if this is a better date than previously found
-                                        if (isBetterDate(earliestDate, bestDateFound)) {
-                                          const previousBest = bestDateFound;
-                                          bestDateFound = fullConsulateDate; // Store full date format
+                                       // Check if this is a better date than previously found
+                                       if (isBetterDate(earliestDate, bestDateFound)) {
+                                         const previousBest = bestDateFound;
+                                         bestDateFound = fullConsulateDate; // Store full date format
 
-                                          console.log(`\n🏆 NEW BEST DATE FOUND! 🏆`);
-                                          if (previousBest) {
-                                            console.log(`📈 Previous best: ${previousBest}`);
-                                          }
-                                          console.log(`🎯 New best: ${bestDateFound}`);
+                                         console.log(`\n🏆 NEW BEST DATE FOUND! 🏆`);
+                                         if (previousBest) {
+                                           console.log(`📈 Previous best: ${previousBest}`);
+                                         }
+                                         console.log(`🎯 New best: ${bestDateFound}`);
 
-                                          // Send Telegram notification
-                                          const message = `
+                                         // Send Telegram notification
+                                         const message = `
 <b>🏆 NEW EARLIER APPOINTMENT FOUND! 🏆</b>
 
 📍 <b>Consulate:</b> ${consulate}
@@ -487,37 +497,34 @@ ${previousBest ? `📈 <b>Previous best date:</b> ${previousBest}` : '🎯 <b>Th
 
 ⏰ <b>Found at:</b> ${new Date().toLocaleString()}
 🔄 <b>Check #:</b> ${checkCount}
-                                          `.trim();
+                                         `.trim();
 
-                                          await sendTelegramNotification(message);
-                                        }
+                                         await sendTelegramNotification(message);
+                                       }
 
-                                      } else {
-                                        console.log(`   ❌ No CASV time slots available for selected date`);
-                                      }
+                                     } else {
+                                       console.log(`   ❌ No CASV time slots available for selected date`);
+                                     }
 
-                                    } catch (casvTimeError) {
-                                      console.log(`   ⚠️ Could not select CASV time slot: ${casvTimeError.message}`);
-                                    }
+                                   } catch (casvTimeError) {
+                                     console.log(`   ⚠️ Could not select CASV time slot: ${casvTimeError.message}`);
+                                   }
 
-                                    break;
-                                  }
-                                }
+                                   break;
+                                 }
+                               }
+                             } else {
+                               console.log(`   ❌ No CASV dates found within ±2 days of consulate date ${selectedConsulateDate}`);
+                               if (casvDays.length > 0) {
+                                 console.log(`   📅 Available CASV dates: ${casvDays.map(d => d.date).join(', ')}`);
+                               }
+                               console.log(`   🔍 Looking for dates between ${Math.max(1, selectedConsulateDate - 2)} and ${selectedConsulateDate + 2}`);
+                               console.log(`   💡 We could not find a CASV date close to the most recent consulate interview available`);
+                             }
 
-                              } else {
-                                console.log(`   ❌ No CASV dates found within ±1 day of consulate date ${selectedConsulateDate}`);
-                                console.log(`   📅 Available CASV dates: ${casvDays.map(d => d.date).join(', ')}`);
-                                console.log(`   💡 We could not find a CASV date close to the most recent consulate interview available`);
-                              }
-
-                            } else {
-                              console.log(`   ❌ No CASV dates available`);
-                              console.log(`   💡 We could not find a CASV date close to the most recent consulate interview available`);
-                            }
-
-                          } catch (casvDateError) {
-                            console.log(`   ⚠️ Could not check CASV dates: ${casvDateError.message}`);
-                          }
+                           } catch (casvDateError) {
+                             console.log(`   ⚠️ Could not check CASV dates: ${casvDateError.message}`);
+                           }
 
                         } else {
                           console.log(`   ❌ No CASV location mapping found for consulate: ${consulate}`);
