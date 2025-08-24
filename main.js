@@ -3,14 +3,71 @@ const puppeteer = require('puppeteer');
 const TelegramBot = require('node-telegram-bot-api');
 
 (async () => {
-  const browser = await puppeteer.launch({ headless: false });
-  const page = await browser.newPage();
+  let browser;
+  let page;
+  
+  // Try to launch browser with different configurations
+  const browserConfigs = [
+    // First try: Standard configuration
+    {
+      headless: false,
+      args: ['--disable-web-security', '--disable-features=VizDisplayCompositor']
+    },
+    // Second try: Container/Docker friendly
+    {
+      headless: false,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu'
+      ]
+    },
+    // Third try: Maximum compatibility (headless)
+    {
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--disable-extensions'
+      ]
+    }
+  ];
+  
+  let launchSuccess = false;
+  for (let i = 0; i < browserConfigs.length && !launchSuccess; i++) {
+    try {
+      console.log(`🚀 Attempting to launch browser (config ${i + 1}/${browserConfigs.length})...`);
+      browser = await puppeteer.launch(browserConfigs[i]);
+      page = await browser.newPage();
+      console.log(`✅ Browser launched successfully with config ${i + 1}`);
+      launchSuccess = true;
+    } catch (error) {
+      console.log(`❌ Browser launch failed with config ${i + 1}: ${error.message}`);
+      if (i === browserConfigs.length - 1) {
+        console.log(`💥 All browser launch attempts failed. This could be due to:`);
+        console.log(`   • Missing Chrome/Chromium installation`);
+        console.log(`   • Running in restricted environment (Docker/WSL)`);
+        console.log(`   • System compatibility issues`);
+        console.log(`\n🔧 Try installing Chrome: sudo apt-get install google-chrome-stable`);
+        console.log(`🔧 Or try running with --no-sandbox: PUPPETEER_ARGS="--no-sandbox" node main.js`);
+        process.exit(1);
+      }
+    }
+  }
 
   // Configuration
   const consulate = process.env.VISA_CONSULATE || 'Brasília';
   const maxDate = process.env.VISA_MAX_DATE || '31-12-2025';
   const refreshInterval = parseInt(process.env.VISA_REFRESH_INTERVAL || '30') * 1000; // Convert to milliseconds
-
   console.log(`🚀 Starting Visa Appointment Monitor`);
   console.log(`📍 Consulate: ${consulate}`);
   console.log(`📅 Max Date: ${maxDate}`);
@@ -37,6 +94,7 @@ const TelegramBot = require('node-telegram-bot-api');
       }
     }
   }
+
 
   // Function to compare dates and check if new date is better
   function isBetterDate(newDateStr, currentBest) {
@@ -71,30 +129,47 @@ const TelegramBot = require('node-telegram-bot-api');
     }
   }
 
-  // Initial login
+  // Initial login with retry logic
   console.log(`\n🔐 Performing initial login...`);
-  await page.goto('https://ais.usvisa-info.com/pt-br/niv/users/sign_in', { waitUntil: 'networkidle2' });
+  
+  let loginSuccess = false;
+  while (!loginSuccess) {
+    try {
+      // Navigate to login page
+      console.log(`🔗 Navigating to login page...`);
+      await page.goto('https://ais.usvisa-info.com/pt-br/niv/users/sign_in', { waitUntil: 'networkidle2', timeout: 30000 });
 
-  // Fill in email
-  await page.type('#user_email', process.env.VISA_USER);
+      // Fill in email
+      await page.type('#user_email', process.env.VISA_USER);
 
-  // Fill in password
-  await page.type('#user_password', process.env.VISA_PASS);
+      // Fill in password
+      await page.type('#user_password', process.env.VISA_PASS);
 
-  // Accept terms
-  await page.click('#policy_confirmed');
+      // Accept terms
+      await page.click('#policy_confirmed');
 
-  // Click login button
-  await page.click('input[name="commit"]');
+      // Click login button
+      await page.click('input[name="commit"]');
 
-  console.log("➡️ Submitted login form (captcha may still block you)");
+      console.log("➡️ Submitted login form (captcha may still block you)");
 
-  // Wait for login to complete and navigate to appointment page
-  await page.waitForNavigation({ waitUntil: 'networkidle2' });
-  console.log("➡️ Login successful, navigating to appointment page...");
+      // Wait for login to complete and navigate to appointment page
+      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+      console.log("➡️ Login successful, navigating to appointment page...");
 
-  await page.goto('https://ais.usvisa-info.com/pt-br/niv/schedule/70146646/appointment', { waitUntil: 'networkidle2' });
-  console.log("➡️ Arrived at appointment scheduling page");
+      // Navigate to appointment page
+      console.log(`🔗 Navigating to appointment page...`);
+      await page.goto('https://ais.usvisa-info.com/pt-br/niv/schedule/70146646/appointment', { waitUntil: 'networkidle2', timeout: 30000 });
+      console.log("➡️ Arrived at appointment scheduling page");
+      
+      loginSuccess = true;
+      
+    } catch (error) {
+      console.log(`⚠️ Setup failed: ${error.message}`);
+      console.log(`🔄 Will retry in ${refreshInterval / 1000} seconds...`);
+      await new Promise(resolve => setTimeout(resolve, refreshInterval));
+    }
+  }
 
   // Select consulate location (do this once)
   console.log(`\n🏛️ Selecting consulate: ${consulate}`);
@@ -148,7 +223,7 @@ const TelegramBot = require('node-telegram-bot-api');
 
     try {
       // Refresh the page to get latest availability
-      await page.reload({ waitUntil: 'networkidle2' });
+      await page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
       console.log(`🔄 Page refreshed`);
 
       // Re-select consulate after refresh (it gets reset)
@@ -673,7 +748,8 @@ ${previousBest ? `📈 <b>Previous best date:</b> ${previousBest}` : '🎯 <b>Th
       }
 
     } catch (error) {
-      console.log(`⚠️ Error during check: ${error.message}`);
+      console.log(`⚠️ Error during appointment check: ${error.message}`);
+      console.log(`🔄 Will retry in next cycle...`);
     }
 
     // Wait for the specified interval before next check
