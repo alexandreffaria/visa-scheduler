@@ -1,5 +1,6 @@
 require('dotenv').config();
 const puppeteer = require('puppeteer');
+const TelegramBot = require('node-telegram-bot-api');
 
 (async () => {
   const browser = await puppeteer.launch({ headless: false });
@@ -15,6 +16,60 @@ const puppeteer = require('puppeteer');
   console.log(`📅 Max Date: ${maxDate}`);
   console.log(`🔄 Refresh Interval: ${refreshInterval / 1000} seconds`);
   console.log(`⏰ Started at: ${new Date().toLocaleString()}`);
+
+  // Initialize Telegram Bot
+  let telegramBot = null;
+  if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
+    telegramBot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: false });
+    console.log(`📱 Telegram notifications enabled`);
+  } else {
+    console.log(`📱 Telegram notifications disabled (missing bot token or chat ID)`);
+  }
+
+  // Function to send Telegram notification
+  async function sendTelegramNotification(message) {
+    if (telegramBot && process.env.TELEGRAM_CHAT_ID) {
+      try {
+        await telegramBot.sendMessage(process.env.TELEGRAM_CHAT_ID, message, { parse_mode: 'HTML' });
+        console.log(`📱 Telegram notification sent successfully`);
+      } catch (error) {
+        console.log(`⚠️ Failed to send Telegram notification: ${error.message}`);
+      }
+    }
+  }
+
+  // Function to compare dates and check if new date is better
+  function isBetterDate(newDateStr, currentBest) {
+    if (!currentBest) return true; // First date found
+
+    // Convert to comparable format (YYYYMMDD)
+    function dateToComparable(dateStr) {
+      if (typeof dateStr === 'string' && dateStr.includes('-')) {
+        const [day, month, year] = dateStr.split('-').map(Number);
+        return year * 10000 + month * 100 + day;
+      } else {
+        // Day number only - use current month/year context
+        const day = parseInt(dateStr);
+        return currentYear * 10000 + currentMonth * 100 + day;
+      }
+    }
+
+    const newComparable = dateToComparable(newDateStr);
+    const bestComparable = dateToComparable(currentBest);
+
+    return newComparable < bestComparable;
+  }
+
+  // Function to format date for display
+  function formatFullDate(dateStr) {
+    if (typeof dateStr === 'string' && dateStr.includes('-')) {
+      return dateStr; // Already in full format
+    } else {
+      // Day number only - format with current month/year
+      const day = parseInt(dateStr);
+      return `${day.toString().padStart(2, '0')}-${currentMonth.toString().padStart(2, '0')}-${currentYear}`;
+    }
+  }
 
   // Initial login
   console.log(`\n🔐 Performing initial login...`);
@@ -76,6 +131,9 @@ const puppeteer = require('puppeteer');
   let previousDates = [];
   let checkCount = 0;
   let selectedConsulateDate = null; // Track the selected consulate date
+  let bestDateFound = null; // Track the best (earliest) date found so far
+  let currentMonth = new Date().getMonth() + 1; // Current month being checked
+  let currentYear = new Date().getFullYear(); // Current year being checked
 
   // Continuous monitoring loop
   console.log(`\n🔄 Starting continuous monitoring...`);
@@ -393,6 +451,46 @@ const puppeteer = require('puppeteer');
 
                                         // Wait for CASV time selection to register
                                         await new Promise(resolve => setTimeout(resolve, 1000));
+
+                                        // Successfully selected both consulate and CASV appointments
+                                        const fullConsulateDate = formatFullDate(earliestDate);
+                                        const fullCasvDate = formatFullDate(bestMatch.date);
+
+                                        console.log(`\n🎉 APPOINTMENT SUCCESSFULLY SELECTED! 🎉`);
+                                        console.log(`📅 Consulate Date: ${fullConsulateDate}`);
+                                        console.log(`⏰ Consulate Time: ${latestTime.text}`);
+                                        console.log(`🏢 CASV Date: ${fullCasvDate}`);
+                                        console.log(`⏰ CASV Time: ${earliestCasvTime.text}`);
+
+                                        // Check if this is a better date than previously found
+                                        if (isBetterDate(earliestDate, bestDateFound)) {
+                                          const previousBest = bestDateFound;
+                                          bestDateFound = fullConsulateDate; // Store full date format
+
+                                          console.log(`\n🏆 NEW BEST DATE FOUND! 🏆`);
+                                          if (previousBest) {
+                                            console.log(`📈 Previous best: ${previousBest}`);
+                                          }
+                                          console.log(`🎯 New best: ${bestDateFound}`);
+
+                                          // Send Telegram notification
+                                          const message = `
+<b>🏆 NEW EARLIER APPOINTMENT FOUND! 🏆</b>
+
+📍 <b>Consulate:</b> ${consulate}
+📅 <b>Consulate Date:</b> ${fullConsulateDate}
+⏰ <b>Consulate Time:</b> ${latestTime.text}
+🏢 <b>CASV Date:</b> ${fullCasvDate}
+⏰ <b>CASV Time:</b> ${earliestCasvTime.text}
+
+${previousBest ? `📈 <b>Previous best date:</b> ${previousBest}` : '🎯 <b>This is the first appointment found!</b>'}
+
+⏰ <b>Found at:</b> ${new Date().toLocaleString()}
+🔄 <b>Check #:</b> ${checkCount}
+                                          `.trim();
+
+                                          await sendTelegramNotification(message);
+                                        }
 
                                       } else {
                                         console.log(`   ❌ No CASV time slots available for selected date`);
