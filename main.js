@@ -158,6 +158,42 @@ const puppeteer = require('puppeteer');
             availableDates = allDays.map(day => ({ date: day.date, isAvailable: true, selector: 'available-calendar-days' }));
             console.log(`   ✅ Found ${allDays.length} available dates in month ${monthsChecked + 1}`);
             console.log(`   📅 Dates: ${allDays.map(d => d.date).join(', ')}`);
+
+            // Select the earliest available date
+            const earliestDate = Math.min(...allDays.map(d => parseInt(d.date)));
+            console.log(`   🎯 Selecting earliest available date: ${earliestDate}`);
+
+            try {
+              // Find and click the earliest available date
+              const dayElements = await page.$$('.ui-datepicker-calendar td');
+              let dateSelected = false;
+
+              for (const dayElement of dayElements) {
+                const text = await dayElement.evaluate(el => el.textContent?.trim());
+                const className = await dayElement.evaluate(el => el.className);
+
+                if (text === earliestDate.toString() &&
+                    !className.includes('ui-datepicker-unselectable') &&
+                    !className.includes('ui-state-disabled') &&
+                    !className.includes('ui-datepicker-other-month')) {
+
+                  await dayElement.click();
+                  console.log(`   ✅ Successfully selected date: ${earliestDate}`);
+
+                  // Wait for selection to register
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                  dateSelected = true;
+                  break;
+                }
+              }
+
+              if (!dateSelected) {
+                console.log(`   ⚠️ Could not find selectable element for date ${earliestDate}`);
+              }
+
+            } catch (error) {
+              console.log(`   ❌ Error selecting date ${earliestDate}: ${error.message}`);
+            }
           } else {
             console.log(`   ❌ No available dates found in this month`);
           }
