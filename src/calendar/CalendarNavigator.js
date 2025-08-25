@@ -14,7 +14,7 @@ class CalendarNavigator {
    * @param {string} calendarType - Type of calendar ('consulate' or 'casv')
    * @returns {Promise<Array>} Array of available dates
    */
-  async findAvailableDates(calendarType = 'consulate') {
+  async findAvailableDates(calendarType = 'consulate', targetConsulateDate = null, consulateMonth = null, consulateYear = null) {
     console.log(`📅 Navigating through ${calendarType} calendar months...`);
     
     let availableDates = [];
@@ -26,7 +26,8 @@ class CalendarNavigator {
     // Update current month/year from calendar
     await this._updateCurrentMonthYear();
     
-    while (monthsChecked < maxMonthsToCheck && availableDates.length === 0) {
+    // Keep checking months until we have what we need
+    while (monthsChecked < maxMonthsToCheck) {
       console.log(`   Checking ${calendarType} month ${monthsChecked + 1} (${this.currentMonth}/${this.currentYear})...`);
       
       // Debug calendar elements on first month
@@ -34,18 +35,54 @@ class CalendarNavigator {
         await this._debugCalendarElements();
       }
       
-      // Try to find available dates using different methods
-      availableDates = await this._findDatesInCurrentMonth();
-      
-      if (availableDates.length > 0) {
-        console.log(`   ✅ Found ${availableDates.length} available dates in month ${monthsChecked + 1} (${this.currentMonth}/${this.currentYear})`);
-        console.log(`   📅 Dates: ${availableDates.map(d => d.fullDate || d.date).join(', ')}`);
-        break;
+      // For CASV calendar, stop once we've gone past the consulate month/year
+      if (calendarType === 'casv' && consulateMonth && consulateYear) {
+        // If we're in a month beyond the consulate month, stop searching
+        if (this.currentYear > consulateYear ||
+            (this.currentYear === consulateYear && this.currentMonth > consulateMonth)) {
+          console.log(`   ⏹️ Stopping CASV search: Current month ${this.currentMonth}/${this.currentYear} is beyond consulate date ${consulateMonth}/${consulateYear}`);
+          break;
+        }
       }
       
-      console.log(`   ❌ No available dates found in this month`);
+      // Try to find available dates using different methods
+      const currentMonthDates = await this._findDatesInCurrentMonth();
       
-      // Navigate to next month if no dates found
+      if (currentMonthDates.length > 0) {
+        console.log(`   ✅ Found ${currentMonthDates.length} available dates in month ${monthsChecked + 1} (${this.currentMonth}/${this.currentYear})`);
+        console.log(`   📅 Dates: ${currentMonthDates.map(d => d.fullDate || d.date).join(', ')}`);
+        
+        // Add dates from this month to our collection
+        availableDates = [...availableDates, ...currentMonthDates];
+        
+        // For consulate appointments, we can stop after finding the first available dates
+        if (calendarType === 'consulate') {
+          break;
+        }
+        
+        // For CASV appointments with a target date, check if we have a compatible date
+        if (calendarType === 'casv' && targetConsulateDate) {
+          const tolerance = this.config.get('monitoring.casvDateTolerance');
+          
+          // Check if any of the current month dates are compatible with the consulate date
+          const compatibleDates = currentMonthDates.filter(day => {
+            const casvDate = parseInt(day.date);
+            // CASV date should be on the same day or before consulate date (within tolerance)
+            const difference = targetConsulateDate - casvDate;
+            return difference >= 0 && difference <= tolerance;
+          });
+          
+          if (compatibleDates.length > 0) {
+            console.log(`   🎯 Found ${compatibleDates.length} compatible CASV dates for consulate date ${targetConsulateDate}`);
+            // We found compatible dates, so we can stop searching
+            break;
+          }
+        }
+      } else {
+        console.log(`   ❌ No available dates found in this month`);
+      }
+      
+      // Navigate to next month unless we've checked the maximum
       if (monthsChecked < maxMonthsToCheck - 1) {
         const navigated = await this._navigateToNextMonth();
         if (!navigated) {

@@ -221,11 +221,30 @@ class AppointmentBooker {
     try {
       console.log(`   📅 Checking CASV dates near consulate date ${this.selectedConsulateDate}...`);
       
+      // Get the consulate month and year to limit CASV search
+      // Extract from the fullDate that was already selected
+      let consulateMonth = null;
+      let consulateYear = null;
+      
+      // For CASV, we only need to check the current month and possibly previous month
+      // Get the month/year from the current calendar context
+      if (this.calendar.currentMonth && this.calendar.currentYear) {
+        consulateMonth = this.calendar.currentMonth;
+        consulateYear = this.calendar.currentYear;
+        console.log(`   ℹ️ Using consulate month/year as boundary: ${consulateMonth}/${consulateYear}`);
+      }
+      
       // Open CASV calendar
       await this.calendar.openCalendar('casv');
       
-      // Find available CASV dates
-      const availableCasvDates = await this.calendar.findAvailableDates('casv');
+      // Find available CASV dates, passing the consulate date to optimize search
+      // Also pass month/year to stop searching past consulate date
+      const availableCasvDates = await this.calendar.findAvailableDates(
+        'casv',
+        this.selectedConsulateDate,
+        consulateMonth,
+        consulateYear
+      );
       
       if (availableCasvDates.length === 0) {
         console.log(`   ❌ No CASV dates found`);
