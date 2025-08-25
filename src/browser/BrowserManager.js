@@ -235,6 +235,18 @@ class BrowserManager {
   }
   
   /**
+   * Get current page URL
+   * @returns {Promise<string>} Current URL
+   */
+  async getCurrentUrl() {
+    if (!this.page) {
+      throw new Error('Browser page not initialized');
+    }
+    
+    return await this.page.url();
+  }
+  
+  /**
    * Check if browser is launched and ready
    * @returns {boolean} True if browser is ready
    */

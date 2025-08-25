@@ -59,6 +59,13 @@ class VisaScheduler {
       // Check for existing appointments
       await this._checkExistingAppointments();
       
+      // Navigate to the appointment scheduling page
+      console.log(`\n🔍 Navigating to appointment scheduling page...`);
+      const appointmentUrl = this.config.get('urls.appointment');
+      await this.browser.navigateTo(appointmentUrl);
+      await this.browser.wait(3000);
+      console.log(`✅ Successfully navigated to appointment page`);
+      
       // Set up consulate selection
       await this.booker.setupConsulateSelection();
       
@@ -193,29 +200,22 @@ class VisaScheduler {
         if (booking.isImprovement) {
           this.booker.printBookingSuccess(booking);
         } else {
-          const ref = this.booker.getBaselineDate() || this.booker.getBestDateFound();
+          const ref = this.booker.getBaselineDate() || this.booker.getBestDateFound() || this.config.get('maxDate');
           console.log(`ℹ️ Found available date ${booking.consulate.date}, but it's not better than ${ref}. No booking or notification.`);
         }
 
-        // Notifications remain strictly “improvement only”
+        // Notifications remain strictly "improvement only"
         if (booking.isImprovement) {
           const notificationSent = await this.notifier.sendAppointmentFound(booking, this.checkCount);
           if (notificationSent) {
             console.log(`📱 Telegram notification sent for improved date`);
           }
         } else {
-          console.log(`📱 Skipping notification - not an improved date (${booking.consulate.date} vs best: ${booking.previousBest || ref})`);
+          const ref = this.booker.getBaselineDate() || this.booker.getBestDateFound() || this.config.get('maxDate');
+          console.log(`📱 Skipping notification - not an improved date (${booking.consulate.date} vs best: ${ref})`);
         }
         
-        // Send notification only for improved dates to avoid spam
-        if (booking.isImprovement) {
-          const notificationSent = await this.notifier.sendAppointmentFound(booking, this.checkCount);
-          if (notificationSent) {
-            console.log(`📱 Telegram notification sent for improved date`);
-          }
-        } else {
-          console.log(`📱 Skipping notification - not an improved date (${booking.consulate.date} vs best: ${booking.previousBest || 'first found'})`);
-        }
+        // NOTE: This appears to be a duplicate notification block - removing to avoid double notifications
         
         // Update previous dates for comparison
         this._updatePreviousDates(booking);
@@ -443,55 +443,178 @@ class VisaScheduler {
     try {
       console.log(`🔍 Checking for existing scheduled appointments...`);
       
+      // Extract the group ID from the current URL after login
+      const currentUrl = await this.browser.getCurrentUrl();
+      let groupId = '';
+      
+      try {
+        // Try to extract group ID from the URL
+        const groupMatch = currentUrl.match(/\/groups\/(\d+)/i);
+        if (groupMatch && groupMatch[1]) {
+          groupId = groupMatch[1];
+          console.log(`📁 Found group ID from URL: ${groupId}`);
+        } else {
+          // Fallback to configuration if URL extraction fails
+          console.log(`⚠️ Could not extract group ID from URL: ${currentUrl}`);
+          groupId = '49414116'; // Fallback to default
+          console.log(`⚠️ Using fallback group ID: ${groupId}`);
+        }
+      } catch (error) {
+        console.log(`⚠️ Error extracting group ID: ${error.message}`);
+        groupId = '49414116'; // Fallback to default
+      }
+      
       // Navigate to the appointments page
-      const appointmentsUrl = 'https://ais.usvisa-info.com/pt-br/niv/groups/49414116';
-      await this.browser.navigate(appointmentsUrl);
+      const appointmentsUrl = `https://ais.usvisa-info.com/pt-br/niv/groups/${groupId}`;
+      console.log(`🔍 Navigating to appointments page: ${appointmentsUrl}`);
+      await this.browser.navigateTo(appointmentsUrl);
       await this.browser.wait(3000);
       
       // Look for appointment information using specific CSS classes
       const appointmentInfo = await this.browser.evaluate(() => {
-        const result = {};
+        const result = {
+          debug: {} // Add debug information
+        };
         
         // Look for consular appointment in elements with class "consular-appt"
         const consularElement = document.querySelector('.consular-appt');
         if (consularElement) {
           const consularText = consularElement.textContent || consularElement.innerText;
-          console.log('Found consular element text:', consularText);
+          result.debug.consularText = consularText; // Save for debugging
           
-          // Parse format like "29 Agosto, 2025, 10:30 Brasília"
-          const consularMatch = consularText.match(/(\d{1,2})\s+(\w+),\s*(\d{4}),\s*(\d{2}:\d{2})\s*(.+)/i);
-          if (consularMatch) {
-            result.consulate = {
-              day: consularMatch[1],
-              month: consularMatch[2],
-              year: consularMatch[3],
-              time: consularMatch[4],
-              location: consularMatch[5] ? consularMatch[5].trim() : 'Brasília'
-            };
+          // Simple string manipulation approach
+          try {
+            // Strip prefix and extract the date part
+            let dateText = consularText;
+            if (dateText.includes('Agendamento consular:')) {
+              dateText = dateText.split('Agendamento consular:')[1].trim();
+            }
+            
+            // Parse the components - format will be like "29 Agosto, 2025, 10:30 Brasília"
+            const parts = dateText.split(/[\s,]+/).filter(part => part.trim().length > 0);
+            result.debug.consularParts = parts;
+            
+            if (parts.length >= 4) {
+              const day = parts[0];
+              const month = parts[1];
+              const year = parts[2];
+              const time = parts[3];
+              
+              // Extract location (everything after time)
+              let location = 'Brasília';
+              if (parts.length > 4) {
+                location = parts.slice(4).join(' ').replace(/Horário local at/i, '').trim();
+              }
+              
+              result.consulate = {
+                day: day,
+                month: month,
+                year: year,
+                time: time,
+                location: location
+              };
+            } else {
+              result.debug.consularParsingFailed = true;
+            }
+          } catch (e) {
+            result.debug.consularError = e.toString();
+            result.debug.consularParsingFailed = true;
           }
+        } else {
+          result.debug.consularElementNotFound = true;
         }
         
         // Look for CASV appointment in elements with class "asc-appt"
         const casvElement = document.querySelector('.asc-appt');
         if (casvElement) {
           const casvText = casvElement.textContent || casvElement.innerText;
-          console.log('Found CASV element text:', casvText);
+          result.debug.casvText = casvText; // Save for debugging
           
-          // Parse format like "29 Agosto, 2025, 08:00 Brasília ASC"
-          const casvMatch = casvText.match(/(\d{1,2})\s+(\w+),\s*(\d{4}),\s*(\d{2}:\d{2})\s*(.+)/i);
-          if (casvMatch) {
-            result.casv = {
-              day: casvMatch[1],
-              month: casvMatch[2],
-              year: casvMatch[3],
-              time: casvMatch[4],
-              location: casvMatch[5] ? casvMatch[5].trim() : 'ASC'
-            };
+          // Simple string manipulation approach
+          try {
+            // Strip prefix and extract the date part
+            let dateText = casvText;
+            if (dateText.includes('Agendamento no CASV:')) {
+              dateText = dateText.split('Agendamento no CASV:')[1].trim();
+            }
+            
+            // Parse the components - format will be like "29 Agosto, 2025, 08:00 Brasília"
+            const parts = dateText.split(/[\s,]+/).filter(part => part.trim().length > 0);
+            result.debug.casvParts = parts;
+            
+            if (parts.length >= 4) {
+              const day = parts[0];
+              const month = parts[1];
+              const year = parts[2];
+              const time = parts[3];
+              
+              // Extract location (everything after time)
+              let location = 'ASC';
+              if (parts.length > 4) {
+                location = parts.slice(4).join(' ').replace(/Horário local at/i, '').trim();
+              }
+              
+              result.casv = {
+                day: day,
+                month: month,
+                year: year,
+                time: time,
+                location: location
+              };
+            } else {
+              result.debug.casvParsingFailed = true;
+            }
+          } catch (e) {
+            result.debug.casvError = e.toString();
+            result.debug.casvParsingFailed = true;
           }
+        } else {
+          result.debug.casvElementNotFound = true;
         }
         
-        return Object.keys(result).length > 0 ? result : null;
+        // If nothing else worked, look for any paragraph that contains date information
+        if (!result.consulate && !result.casv) {
+          const allParagraphs = Array.from(document.querySelectorAll('p'));
+          result.debug.paragraphsCount = allParagraphs.length;
+          
+          // Collect the text of the first 10 paragraphs for debugging
+          result.debug.paragraphs = allParagraphs.slice(0, 10).map(p => p.textContent || p.innerText);
+        }
+        
+        return result;
       });
+      
+      // Log debug information
+      if (appointmentInfo?.debug) {
+        console.log(`🔍 Debug information for appointment detection:`);
+        if (appointmentInfo.debug.consularText) {
+          console.log(`   Consular text: "${appointmentInfo.debug.consularText}"`);
+        }
+        if (appointmentInfo.debug.casvText) {
+          console.log(`   CASV text: "${appointmentInfo.debug.casvText}"`);
+        }
+        if (appointmentInfo.debug.consularElementNotFound) {
+          console.log(`   ⚠️ Consular element (.consular-appt) not found`);
+        }
+        if (appointmentInfo.debug.casvElementNotFound) {
+          console.log(`   ⚠️ CASV element (.asc-appt) not found`);
+        }
+        if (appointmentInfo.debug.consularMatchFailed) {
+          console.log(`   ⚠️ Failed to match date pattern in consular text`);
+        }
+        if (appointmentInfo.debug.casvMatchFailed) {
+          console.log(`   ⚠️ Failed to match date pattern in CASV text`);
+        }
+        if (appointmentInfo.debug.paragraphs) {
+          console.log(`   Found ${appointmentInfo.debug.paragraphsCount} paragraphs on page, first few are:`);
+          appointmentInfo.debug.paragraphs.forEach((text, i) => {
+            console.log(`     [${i}]: "${text.trim()}"`);
+          });
+        }
+        
+        // Clean up debug info before continuing
+        delete appointmentInfo.debug;
+      }
       
       if (appointmentInfo) {
         console.log(`📅 Found existing appointments:`);

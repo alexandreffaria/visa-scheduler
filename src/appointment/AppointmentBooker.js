@@ -10,6 +10,7 @@ class AppointmentBooker {
     this.selectedConsulateDate = null;
     this.existingAppointments = null; // Store existing appointments if found
     this.baselineDate = null; // Permanent baseline from existing appointment
+    this.maxDate = config.get('maxDate'); // Store the max date from config
   }
   
   /**
@@ -332,12 +333,24 @@ class AppointmentBooker {
   _checkDateImprovement(newDate) {
     const newComparable = this._dateToComparable(newDate);
     
-    // If we have a baseline date (existing appointment), always compare against it
-    const comparisonDate = this.baselineDate || this.bestDateFound;
+    // First, compare with the maxDate from config
+    const maxDateComparable = this._dateToComparable(this.maxDate);
     
-    if (!comparisonDate) {
+    // If the new date is later than the max date, it's not an improvement
+    if (newComparable > maxDateComparable) {
+      console.log(`   ⚠️ Found date ${newDate} is later than max date: ${this.maxDate} - not acceptable`);
+      return false;
+    }
+    
+    // If we have a baseline date (existing appointment), always compare against it
+    // otherwise use maxDate or bestDateFound
+    const comparisonDate = this.baselineDate || this.bestDateFound || this.maxDate;
+    
+    if (!this.baselineDate && !this.bestDateFound) {
       // First date found and no existing appointments
+      // Only accept if it's earlier than max date (already checked above)
       this.bestDateFound = newDate;
+      console.log(`   📈 First date found: ${newDate} (earlier than max date: ${this.maxDate})`);
       return true;
     }
     
@@ -351,10 +364,10 @@ class AppointmentBooker {
       if (this.baselineDate) {
         console.log(`   📈 Found date ${newDate} is better than baseline appointment: ${this.baselineDate}`);
       } else {
-        console.log(`   📈 New best date: ${newDate} (improved from ${previousBest})`);
+        console.log(`   📈 New best date: ${newDate} (improved from ${previousBest || this.maxDate})`);
       }
     } else {
-      const referenceDate = this.baselineDate || this.bestDateFound;
+      const referenceDate = this.baselineDate || this.bestDateFound || this.maxDate;
       if (this.baselineDate) {
         console.log(`   📅 Found date ${newDate} is not better than baseline appointment: ${referenceDate} - no notification will be sent`);
       } else {
