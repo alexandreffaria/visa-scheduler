@@ -8,8 +8,8 @@ class AppointmentBooker {
     this.calendar = calendarNavigator;
     this.bestDateFound = null;
     this.selectedConsulateDate = null;
-    this.currentMonth = new Date().getMonth() + 1;
-    this.currentYear = new Date().getFullYear();
+    this.existingAppointments = null; // Store existing appointments if found
+    this.baselineDate = null; // Permanent baseline from existing appointment
   }
   
   /**
@@ -58,15 +58,34 @@ class AppointmentBooker {
       }
       
       // Select the earliest available date
-      const earliestDate = Math.min(...availableDates.map(d => parseInt(d.date)));
-      const dateSelected = await this.calendar.selectDate(earliestDate);
+      const earliestAvailable = availableDates.reduce((earliest, current) => {
+        const currentComparable = this._dateToComparable(current.fullDate);
+        const earliestComparable = this._dateToComparable(earliest.fullDate);
+        return currentComparable < earliestComparable ? current : earliest;
+      });
+      
+      const dateSelected = await this.calendar.selectDate(earliestAvailable.date);
       
       if (!dateSelected) {
-        console.log(`❌ Could not select consulate date: ${earliestDate}`);
+        console.log(`❌ Could not select consulate date: ${earliestAvailable.fullDate}`);
         return null;
       }
       
-      this.selectedConsulateDate = parseInt(earliestDate);
+      this.selectedConsulateDate = parseInt(earliestAvailable.date);
+      const selectedFullDate = earliestAvailable.fullDate;
+
+      const isImprovementEarly = this._checkDateImprovement(selectedFullDate);
+      if (!isImprovementEarly) {
+        const referenceDate = this.baselineDate || this.bestDateFound;
+        console.log(`   ⏭️ Found earliest available date ${selectedFullDate} is not better than reference ${referenceDate}. Skipping selection/booking.`);
+        return {
+          consulate: { date: selectedFullDate, time: null, location: this.config.get('consulate') },
+          casv: { date: null, time: null, location: this._getCasvLocationName(this.config.get('consulate')) },
+          isImprovement: false,
+          previousBest: this.bestDateFound,
+          baseline: this.baselineDate || null
+        };
+}
       
       // Select consulate time slot
       const consulateTimeResult = await this._selectConsulateTime();
@@ -82,22 +101,23 @@ class AppointmentBooker {
         return null;
       }
       
-      // Check if this is a better date than previously found
-      const isImprovement = this._checkDateImprovement(earliestDate);
+      // Check if this is a better date than previously found or existing appointments
+      const isImprovement = this._checkDateImprovement(selectedFullDate);
       
       return {
         consulate: {
-          date: this._formatFullDate(earliestDate),
+          date: selectedFullDate,
           time: consulateTimeResult.text,
           location: this.config.get('consulate')
         },
         casv: {
-          date: this._formatFullDate(casvResult.date),
+          date: casvResult.fullDate,
           time: casvResult.time,
           location: this._getCasvLocationName()
         },
         isImprovement,
-        previousBest: this.bestDateFound
+        previousBest: this.bestDateFound,
+        existingAppointments: this.existingAppointments
       };
       
     } catch (error) {
@@ -248,6 +268,7 @@ class AppointmentBooker {
       
       return {
         date: bestMatch.date,
+        fullDate: bestMatch.fullDate,
         time: casvTimeResult.text
       };
       
@@ -311,18 +332,37 @@ class AppointmentBooker {
   _checkDateImprovement(newDate) {
     const newComparable = this._dateToComparable(newDate);
     
-    if (!this.bestDateFound) {
-      this.bestDateFound = this._formatFullDate(newDate);
-      return true; // First date found
+    // If we have a baseline date (existing appointment), always compare against it
+    const comparisonDate = this.baselineDate || this.bestDateFound;
+    
+    if (!comparisonDate) {
+      // First date found and no existing appointments
+      this.bestDateFound = newDate;
+      return true;
     }
     
-    const bestComparable = this._dateToComparable(this.bestDateFound);
-    const isImprovement = newComparable < bestComparable;
+    const baselineComparable = this._dateToComparable(comparisonDate);
+    const isImprovement = newComparable < baselineComparable;
     
     if (isImprovement) {
-      this.bestDateFound = this._formatFullDate(newDate);
+      const previousBest = this.bestDateFound;
+      this.bestDateFound = newDate;
+      
+      if (this.baselineDate) {
+        console.log(`   📈 Found date ${newDate} is better than baseline appointment: ${this.baselineDate}`);
+      } else {
+        console.log(`   📈 New best date: ${newDate} (improved from ${previousBest})`);
+      }
+    } else {
+      const referenceDate = this.baselineDate || this.bestDateFound;
+      if (this.baselineDate) {
+        console.log(`   📅 Found date ${newDate} is not better than baseline appointment: ${referenceDate} - no notification will be sent`);
+      } else {
+        console.log(`   📅 Found date ${newDate} is not better than current best: ${referenceDate}`);
+      }
     }
     
+    // Only update best date if it's an improvement
     return isImprovement;
   }
   
@@ -337,9 +377,7 @@ class AppointmentBooker {
       const [day, month, year] = dateStr.split('-').map(Number);
       return year * 10000 + month * 100 + day;
     } else {
-      // Day number only - use current month/year context
-      const day = parseInt(dateStr);
-      return this.currentYear * 10000 + this.currentMonth * 100 + day;
+      throw new Error(`Invalid date format: ${dateStr}. Expected DD-MM-YYYY format.`);
     }
   }
   
@@ -349,14 +387,17 @@ class AppointmentBooker {
    * @param {string|number} dateStr - Date to format
    * @returns {string} Formatted date string
    */
-  _formatFullDate(dateStr) {
-    if (typeof dateStr === 'string' && dateStr.includes('-')) {
-      return dateStr; // Already in full format
-    } else {
-      // Day number only - format with current month/year
-      const day = parseInt(dateStr);
-      return `${day.toString().padStart(2, '0')}-${this.currentMonth.toString().padStart(2, '0')}-${this.currentYear}`;
-    }
+  /**
+   * Set existing appointments if found
+   * @param {object} appointments - Existing appointment information
+   */
+  setExistingAppointments(appointments) {
+    this.existingAppointments = appointments;
+    // Set the existing appointment as the permanent baseline that never changes
+    this.baselineDate = appointments.consulate.date;
+    this.bestDateFound = appointments.consulate.date;
+    console.log(`📅 Existing appointment set as permanent baseline: ${appointments.consulate.date}`);
+    console.log(`📅 Will only notify for dates better than: ${this.baselineDate}`);
   }
   
   /**
@@ -403,6 +444,14 @@ class AppointmentBooker {
    */
   getBestDateFound() {
     return this.bestDateFound;
+  }
+  
+  /**
+   * Get the baseline date (existing appointment)
+   * @returns {string|null} Baseline date found at startup
+   */
+  getBaselineDate() {
+    return this.baselineDate;
   }
   
   /**

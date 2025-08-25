@@ -56,6 +56,9 @@ class VisaScheduler {
       // Perform initial authentication
       await this.auth.login();
       
+      // Check for existing appointments
+      await this._checkExistingAppointments();
+      
       // Set up consulate selection
       await this.booker.setupConsulateSelection();
       
@@ -169,6 +172,12 @@ class VisaScheduler {
     console.log(`\n🔍 Check #${this.checkCount} - ${this.lastCheckTime.toLocaleString()}`);
     console.log(`📅 Checking for available dates before: ${this.config.get('maxDate')}`);
     
+    // Show the baseline date that's being used for comparison
+    const baselineDate = this.booker.getBaselineDate();
+    if (baselineDate) {
+      console.log(`🎯 Baseline date (existing appointment): ${baselineDate} - only better dates will trigger notifications`);
+    }
+    
     try {
       // Refresh the page to get latest availability
       await this.browser.reload();
@@ -181,12 +190,29 @@ class VisaScheduler {
         this.appointmentsFound++;
         
         // Print booking success
-        this.booker.printBookingSuccess(booking);
+        if (booking.isImprovement) {
+          this.booker.printBookingSuccess(booking);
+        } else {
+          const ref = this.booker.getBaselineDate() || this.booker.getBestDateFound();
+          console.log(`ℹ️ Found available date ${booking.consulate.date}, but it's not better than ${ref}. No booking or notification.`);
+        }
+
+        // Notifications remain strictly “improvement only”
+        if (booking.isImprovement) {
+          const notificationSent = await this.notifier.sendAppointmentFound(booking, this.checkCount);
+          if (notificationSent) {
+            console.log(`📱 Telegram notification sent for improved date`);
+          }
+        } else {
+          console.log(`📱 Skipping notification - not an improved date (${booking.consulate.date} vs best: ${booking.previousBest || ref})`);
+        }
         
         // Send notification only for improved dates to avoid spam
         if (booking.isImprovement) {
-          await this.notifier.sendAppointmentFound(booking, this.checkCount);
-          console.log(`📱 Telegram notification sent for improved date`);
+          const notificationSent = await this.notifier.sendAppointmentFound(booking, this.checkCount);
+          if (notificationSent) {
+            console.log(`📱 Telegram notification sent for improved date`);
+          }
         } else {
           console.log(`📱 Skipping notification - not an improved date (${booking.consulate.date} vs best: ${booking.previousBest || 'first found'})`);
         }
@@ -407,6 +433,121 @@ class VisaScheduler {
       console.log(`❌ System test failed: ${error.message}`);
       throw error;
     }
+  }
+  
+  /**
+   * Check for existing scheduled appointments
+   * @private
+   */
+  async _checkExistingAppointments() {
+    try {
+      console.log(`🔍 Checking for existing scheduled appointments...`);
+      
+      // Navigate to the appointments page
+      const appointmentsUrl = 'https://ais.usvisa-info.com/pt-br/niv/groups/49414116';
+      await this.browser.navigate(appointmentsUrl);
+      await this.browser.wait(3000);
+      
+      // Look for appointment information using specific CSS classes
+      const appointmentInfo = await this.browser.evaluate(() => {
+        const result = {};
+        
+        // Look for consular appointment in elements with class "consular-appt"
+        const consularElement = document.querySelector('.consular-appt');
+        if (consularElement) {
+          const consularText = consularElement.textContent || consularElement.innerText;
+          console.log('Found consular element text:', consularText);
+          
+          // Parse format like "29 Agosto, 2025, 10:30 Brasília"
+          const consularMatch = consularText.match(/(\d{1,2})\s+(\w+),\s*(\d{4}),\s*(\d{2}:\d{2})\s*(.+)/i);
+          if (consularMatch) {
+            result.consulate = {
+              day: consularMatch[1],
+              month: consularMatch[2],
+              year: consularMatch[3],
+              time: consularMatch[4],
+              location: consularMatch[5] ? consularMatch[5].trim() : 'Brasília'
+            };
+          }
+        }
+        
+        // Look for CASV appointment in elements with class "asc-appt"
+        const casvElement = document.querySelector('.asc-appt');
+        if (casvElement) {
+          const casvText = casvElement.textContent || casvElement.innerText;
+          console.log('Found CASV element text:', casvText);
+          
+          // Parse format like "29 Agosto, 2025, 08:00 Brasília ASC"
+          const casvMatch = casvText.match(/(\d{1,2})\s+(\w+),\s*(\d{4}),\s*(\d{2}:\d{2})\s*(.+)/i);
+          if (casvMatch) {
+            result.casv = {
+              day: casvMatch[1],
+              month: casvMatch[2],
+              year: casvMatch[3],
+              time: casvMatch[4],
+              location: casvMatch[5] ? casvMatch[5].trim() : 'ASC'
+            };
+          }
+        }
+        
+        return Object.keys(result).length > 0 ? result : null;
+      });
+      
+      if (appointmentInfo) {
+        console.log(`📅 Found existing appointments:`);
+        
+        if (appointmentInfo.consulate) {
+          const consularDate = this._parsePortugueseDate(appointmentInfo.consulate);
+          appointmentInfo.consulate.date = consularDate;
+          console.log(`   🏛️ Consular: ${consularDate} at ${appointmentInfo.consulate.time} - ${appointmentInfo.consulate.location}`);
+        }
+        
+        if (appointmentInfo.casv) {
+          const casvDate = this._parsePortugueseDate(appointmentInfo.casv);
+          appointmentInfo.casv.date = casvDate;
+          console.log(`   🏢 CASV: ${casvDate} at ${appointmentInfo.casv.time} - ${appointmentInfo.casv.location}`);
+        }
+        
+        // Set existing appointments in booker
+        this.booker.setExistingAppointments(appointmentInfo);
+        
+        console.log(`✅ Existing appointments loaded - will only notify for better dates than ${appointmentInfo.consulate.date}\n`);
+      } else {
+        console.log(`📅 No existing appointments found - will notify for any dates found\n`);
+      }
+      
+    } catch (error) {
+      console.log(`⚠️ Could not check existing appointments: ${error.message}`);
+      console.log(`🔄 Continuing with monitoring...\n`);
+    }
+  }
+  
+  /**
+   * Parse Portuguese date to DD-MM-YYYY format
+   * @private
+   * @param {object} dateObj - Date object with day, month (Portuguese), year
+   * @returns {string} Formatted date string
+   */
+  _parsePortugueseDate(dateObj) {
+    const monthMap = {
+      'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
+      'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+      'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+    };
+    
+    const day = dateObj.day.padStart(2, '0');
+    const monthKey = dateObj.month.toLowerCase();
+    const month = monthMap[monthKey];
+    
+    if (!month) {
+      console.log(`⚠️ Warning: Unknown Portuguese month '${dateObj.month}' - using '01'`);
+      return `${day}-01-${dateObj.year}`;
+    }
+    
+    const formattedDate = `${day}-${month}-${dateObj.year}`;
+    console.log(`📅 Parsed Portuguese date: ${dateObj.day} ${dateObj.month}, ${dateObj.year} → ${formattedDate}`);
+    
+    return formattedDate;
   }
 }
 

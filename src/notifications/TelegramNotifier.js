@@ -65,12 +65,14 @@ class TelegramNotifier {
   async sendAppointmentFound(booking, checkCount = 0) {
     const consulate = this.config.get('consulate');
     
-    let message;
-    if (booking.isImprovement) {
-      message = this._formatImprovementMessage(booking, consulate, checkCount);
-    } else {
-      message = this._formatAppointmentMessage(booking, consulate, checkCount);
+    // Only send notifications for actual improvements
+    if (!booking.isImprovement) {
+      console.log(`📱 Skipping notification - not an improved date (${booking.consulate.date} vs best: ${booking.previousBest || 'first found'})`);
+      return false;
     }
+    
+    // Format message for an improved date
+    const message = this._formatImprovementMessage(booking, consulate, checkCount);
     
     return await this.sendNotification(message);
   }
