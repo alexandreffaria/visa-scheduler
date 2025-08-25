@@ -465,7 +465,8 @@ class VisaScheduler {
       }
       
       // Navigate to the appointments page
-      const appointmentsUrl = `https://ais.usvisa-info.com/pt-br/niv/groups/${groupId}`;
+      const baseGroupsUrl = this.config.get('urls.groups');
+      const appointmentsUrl = baseGroupsUrl ? baseGroupsUrl : `https://ais.usvisa-info.com/pt-br/niv/groups/${groupId}`;
       console.log(`🔍 Navigating to appointments page: ${appointmentsUrl}`);
       await this.browser.navigateTo(appointmentsUrl);
       await this.browser.wait(3000);

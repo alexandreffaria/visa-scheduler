@@ -61,7 +61,8 @@ class AppConfig {
       // URLs
       urls: {
         login: 'https://ais.usvisa-info.com/pt-br/niv/users/sign_in',
-        appointment: 'https://ais.usvisa-info.com/pt-br/niv/schedule/70146646/appointment'
+        appointment: process.env.VISA_APPOINTMENT_URL || 'https://ais.usvisa-info.com/pt-br/niv/schedule/70146646/appointment',
+        groups: process.env.VISA_GROUPS_URL || 'https://ais.usvisa-info.com/pt-br/niv/groups/49414116'
       },
       
       // Consulate mappings

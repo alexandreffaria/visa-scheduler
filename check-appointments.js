@@ -51,7 +51,8 @@ async function checkAppointments() {
     }
     
     // Navigate to the appointments page
-    const appointmentsUrl = `https://ais.usvisa-info.com/pt-br/niv/groups/${groupId}`;
+    const baseGroupsUrl = config.get('urls.groups');
+    const appointmentsUrl = baseGroupsUrl ? baseGroupsUrl : `https://ais.usvisa-info.com/pt-br/niv/groups/${groupId}`;
     console.log(`🔍 Navigating to appointments page: ${appointmentsUrl}`);
     await browser.navigateTo(appointmentsUrl);
     
