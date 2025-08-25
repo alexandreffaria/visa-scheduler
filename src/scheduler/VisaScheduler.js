@@ -183,8 +183,13 @@ class VisaScheduler {
         // Print booking success
         this.booker.printBookingSuccess(booking);
         
-        // Send notification
-        await this.notifier.sendAppointmentFound(booking, this.checkCount);
+        // Send notification only for improved dates to avoid spam
+        if (booking.isImprovement) {
+          await this.notifier.sendAppointmentFound(booking, this.checkCount);
+          console.log(`📱 Telegram notification sent for improved date`);
+        } else {
+          console.log(`📱 Skipping notification - not an improved date (${booking.consulate.date} vs best: ${booking.previousBest || 'first found'})`);
+        }
         
         // Update previous dates for comparison
         this._updatePreviousDates(booking);
