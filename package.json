@@ -1,0 +1,29 @@
+{
+  "name": "visa-scheduler",
+  "version": "1.0.0",
+  "description": "A completely refactored, modular visa appointment monitoring system that automatically books the earliest available visa appointments and sends notifications.",
+  "main": "main.js",
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "node-telegram-bot-api": "^0.66.0",
+    "playwright": "^1.55.0",
+    "playwright-core": "^1.55.0",
+    "pupeteer": "^0.0.1",
+    "puppeteer": "^24.18.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexandreffaria/visa-scheduler.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/alexandreffaria/visa-scheduler/issues"
+  },
+  "homepage": "https://github.com/alexandreffaria/visa-scheduler#readme"
+}
